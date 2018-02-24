@@ -234,8 +234,9 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	requestPath := meta.Metadata["path"]
 	command := meta.Metadata["command"]
 	if command == "view" || command == "install" {
+		extraInfo := meta.Metadata["extra"]
 		repo := strings.TrimPrefix(requestPath, "/")
-		tag := "0.9.100" //hard code
+		tag := strings.TrimSpace(strings.TrimPrefix(extraInfo, repo+"@"))
 		if checkImageExisting(nsd.RegistryAPI, nsd.RegistryNamespace, repo, tag) {
 			policy.Image = repo
 			policy.Tag = tag
@@ -269,12 +270,14 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 
 func checkImageExisting(api, namespace, image, tag string) bool {
 	url := fmt.Sprintf("%s%s%s%s%s%s%s", api, "/repositories/", namespace, "/", image, "tags", tag)
-	log.Printf("Check image existing: %s", url)
+	log.Printf("Check image existing: %s\n", url)
 	if resp, err := http.Get(url); err == nil {
 		if resp.StatusCode == http.StatusOK {
+			log.Println("Image existing")
 			return true
 		}
 	}
 
+	log.Println("Image not existing")
 	return false
 }
