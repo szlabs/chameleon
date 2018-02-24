@@ -2,6 +2,7 @@ package lib
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -87,6 +88,9 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 			IdleConnTimeout:       120 * time.Second,
 			TLSHandshakeTimeout:   20 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
 		}
 		ps.proxy = &httputil.ReverseProxy{
 			Transport: t,
