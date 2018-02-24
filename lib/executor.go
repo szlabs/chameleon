@@ -12,8 +12,10 @@ import (
 
 //Executor ...
 type Executor struct {
-	hostOn string
-	docker *client.DockerClient
+	hostOn    string
+	docker    *client.DockerClient
+	harbor    string
+	namespace string
 }
 
 //Environment ...
@@ -23,7 +25,7 @@ type Environment struct {
 }
 
 //NewExecutor ...
-func NewExecutor(dockerdHost string, hPort int) *Executor {
+func NewExecutor(dockerdHost string, hPort int, harbor, namespace string) *Executor {
 	dHost := ""
 	if hPort > 0 {
 		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)
@@ -33,6 +35,8 @@ func NewExecutor(dockerdHost string, hPort int) *Executor {
 		docker: &client.DockerClient{
 			Host: dHost,
 		},
+		harbor:    harbor,
+		namespace: namespace,
 	}
 }
 
@@ -58,7 +62,12 @@ func (e *Executor) Exec(policy *SchedulePolicy) (Environment, error) {
 		bindPorts = append(bindPorts, boundPort)
 	}
 
-	runID, err := e.docker.Run(fmt.Sprintf("%s:%s", policy.Image, policy.Tag), "", "", true, true, bindPorts)
+	image := fmt.Sprintf("%s:%s", policy.Image, policy.Tag)
+	if !policy.UseHub {
+		image = fmt.Sprintf("%s/%s/%s", e.harbor, e.namespace, image)
+	}
+
+	runID, err := e.docker.Run(image, "", "", true, true, bindPorts)
 	if err != nil {
 		return Environment{}, err
 	}

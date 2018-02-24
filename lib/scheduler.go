@@ -19,6 +19,7 @@ type SchedulerConfig struct {
 	DockerHost string
 	HPort      int
 	Harbor     string
+	Namespace  string //use 'npm-registry' now
 }
 
 //Scheduler ...
@@ -34,8 +35,8 @@ type Scheduler struct {
 func NewScheduler(ctx context.Context, cfg SchedulerConfig) *Scheduler {
 	return &Scheduler{
 		pool:     NewRuntimePool(),
-		executor: NewExecutor(cfg.DockerHost, cfg.HPort),
-		packer:   NewPacker(cfg.DockerHost, cfg.HPort, cfg.Harbor),
+		executor: NewExecutor(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
+		packer:   NewPacker(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
 		ctx:      ctx,
 	}
 }
@@ -151,6 +152,7 @@ type ServeEnvironment struct {
 type SchedulePolicy struct {
 	Image         string
 	Tag           string
+	UseHub        bool
 	ReuseIdentity string
 	BoundPorts    []int
 	Rebuild       *BuildPolicy
@@ -202,6 +204,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	policy := &SchedulePolicy{
 		Image:      "stevenzou/npm-registry",
 		Tag:        "latest",
+		UseHub:     true,
 		BoundPorts: []int{80},
 		Rebuild: &BuildPolicy{
 			Image: "stevenzou/npm-registry",
@@ -222,6 +225,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 		policy.Image = "harbor-ui"
 		policy.Tag = "0.9.100"
 		policy.Rebuild = nil
+		policy.UseHub = false
 	}
 
 	if command == "login" || command == "adduser" || command == "add-user" {

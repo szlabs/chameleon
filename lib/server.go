@@ -68,6 +68,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 			DockerHost: ps.dockerdHost,
 			HPort:      ps.dockerPort,
 			Harbor:     ps.harbor,
+			Namespace:  "npm-registry", //use hardcode now
 		}
 		ps.scheduler = NewScheduler(ctx, sConfig)
 		ps.scheduler.Start()

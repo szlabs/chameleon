@@ -12,11 +12,11 @@ type Packer struct {
 	hostOn    string
 	docker    *client.DockerClient
 	harbor    string
-	namespace string //registry namespace , use public 'library' now
+	namespace string
 }
 
 //NewPacker ...
-func NewPacker(dockerdHost string, hPort int, harborHost string) *Packer {
+func NewPacker(dockerdHost string, hPort int, harborHost string, namespace string) *Packer {
 	dHost := ""
 	if hPort > 0 {
 		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)
@@ -27,7 +27,7 @@ func NewPacker(dockerdHost string, hPort int, harborHost string) *Packer {
 		docker: &client.DockerClient{
 			Host: dHost,
 		},
-		namespace: "library",
+		namespace: namespace,
 		harbor:    harborHost,
 	}
 }
