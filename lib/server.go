@@ -90,6 +90,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 		ps.proxy = &httputil.ReverseProxy{
 			Transport: t,
 			Director: func(req *http.Request) {
+				log.Printf("HEADER:%#v\n", req.Header)
 				log.Printf("PROXY: %s %s\n", req.Method, req.URL.String())
 
 				//Parse request

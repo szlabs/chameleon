@@ -37,7 +37,7 @@ func NpmParser(req *http.Request) (RequestMeta, error) {
 			commands := strings.Split(npmCmd, " ")
 			command := strings.TrimSpace(commands[0])
 			meta.Metadata["command"] = command
-			meta.Metadata["path"] = req.RequestURI
+			meta.Metadata["path"] = req.URL.String()
 			meta.Metadata["extra"] = strings.TrimPrefix(npmCmd, command)
 			meta.Metadata["session"] = req.Header.Get("Npm-Session")
 

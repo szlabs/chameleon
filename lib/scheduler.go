@@ -219,17 +219,17 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	}
 
 	//Special cases
+	requestPath := meta.Metadata["path"]
 	command := meta.Metadata["command"]
 	if command == "view" || command == "install" {
 		//hardcode
-		policy.Image = "harbor-ui"
+		policy.Image = strings.TrimPrefix(requestPath, "/")
 		policy.Tag = "0.9.100"
 		policy.Rebuild = nil
 		policy.UseHub = false
 	}
 
 	if command == "login" || command == "adduser" || command == "add-user" {
-		requestPath := meta.Metadata["path"]
 		if strings.Contains(requestPath, "org.couchdb.user:") &&
 			!strings.Contains(requestPath, "/-rev/") {
 			policy.Rebuild = nil
@@ -237,7 +237,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	}
 
 	if command == "publish" {
-		policy.Rebuild.Image = "harbor-ui"
+		policy.Rebuild.Image = strings.TrimPrefix(requestPath, "/")
 		policy.Rebuild.Tag = "0.9.100"
 		policy.Rebuild.NeedPush = true
 	}
