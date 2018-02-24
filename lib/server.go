@@ -143,6 +143,8 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 							// explicitly disable User-Agent so it's not set to default value
 							req.Header.Set("User-Agent", "")
 						}
+
+						log.Printf("===PROXY TO===:%s\n", target.String())
 					}
 				}
 				//do nothing

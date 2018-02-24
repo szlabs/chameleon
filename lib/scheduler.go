@@ -2,6 +2,7 @@ package lib
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,10 +73,7 @@ func (s *Scheduler) Start() {
 	}()
 
 	s.drivers = make(map[string]ScheduleDriver)
-	s.drivers[registryTypeNpm] = &NpmScheduleDriver{
-		RegistryAPI:       s.registryAPI,
-		RegistryNamespace: s.namespace,
-	}
+	s.drivers[registryTypeNpm] = NewNpmScheduleDriver(s.registryAPI, s.namespace)
 
 	log.Println("Scheduler is started")
 }
@@ -202,8 +200,24 @@ type ScheduleDriver interface {
 
 //NpmScheduleDriver ...
 type NpmScheduleDriver struct {
-	RegistryAPI       string
-	RegistryNamespace string
+	registryAPI       string
+	registryNamespace string
+	httpClient        *http.Client
+}
+
+//NewNpmScheduleDriver ...
+func NewNpmScheduleDriver(registryAPI, registryNamespace string) *NpmScheduleDriver {
+	return &NpmScheduleDriver{
+		registryAPI:       registryAPI,
+		registryNamespace: registryNamespace,
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+	}
 }
 
 //Schedule ...
@@ -237,7 +251,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 		extraInfo := meta.Metadata["extra"]
 		repo := strings.TrimPrefix(requestPath, "/")
 		tag := strings.TrimSpace(strings.TrimPrefix(extraInfo, repo+"@"))
-		if checkImageExisting(nsd.RegistryAPI, nsd.RegistryNamespace, repo, tag) {
+		if nsd.checkImageExisting(repo, tag) {
 			policy.Image = repo
 			policy.Tag = tag
 			policy.UseHub = false
@@ -255,7 +269,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	if command == "publish" {
 		repo := strings.TrimPrefix(requestPath, "/")
 		tag := "0.9.100" //hard code
-		if checkImageExisting(nsd.RegistryAPI, nsd.RegistryNamespace, repo, tag) {
+		if nsd.checkImageExisting(repo, tag) {
 			policy.Image = repo
 			policy.Tag = tag
 			policy.UseHub = false
@@ -268,16 +282,19 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	return policy
 }
 
-func checkImageExisting(api, namespace, image, tag string) bool {
-	url := fmt.Sprintf("%s%s%s%s%s%s%s", api, "/repositories/", namespace, "/", image, "/tags/", tag)
-	log.Printf("Check image existing: %s\n", url)
-	if resp, err := http.Get(url); err == nil {
+func (nsd *NpmScheduleDriver) checkImageExisting(image, tag string) bool {
+	url := fmt.Sprintf("%s%s%s%s%s%s%s", nsd.registryAPI, "/repositories/", nsd.registryNamespace, "/", image, "/tags/", tag)
+	resp, err := nsd.httpClient.Get(url)
+	if err == nil {
 		if resp.StatusCode == http.StatusOK {
-			log.Println("Image existing")
+			log.Printf("Image %s:%s existing\n", image, tag)
 			return true
 		}
+
+		log.Printf("Image %s:%s not existing\n", image, tag)
+		return false
 	}
 
-	log.Println("Image not existing")
+	log.Printf("Failed to Check image %s:%s existing: %s\n", image, tag, err)
 	return false
 }
