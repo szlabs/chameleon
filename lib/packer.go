@@ -16,7 +16,7 @@ type Packer struct {
 }
 
 //NewPacker ...
-func NewPacker(dockerdHost string, hPort int32, harborHost string) *Packer {
+func NewPacker(dockerdHost string, hPort int, harborHost string) *Packer {
 	dHost := ""
 	if hPort > 0 {
 		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)

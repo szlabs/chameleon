@@ -18,6 +18,7 @@ type ServerConfig struct {
 	Host        string
 	Port        int
 	DockerdHost string
+	DockerPort  int
 	HarborHost  string
 	HarborProto string
 }
@@ -29,6 +30,7 @@ type ProxyServer struct {
 	host        string
 	port        int
 	dockerdHost string
+	dockerPort  int
 	harbor      string
 	harborProto string
 	running     bool
@@ -42,6 +44,7 @@ func NewProxyServer(config ServerConfig) *ProxyServer {
 		host:        config.Host,
 		port:        config.Port,
 		dockerdHost: config.DockerdHost,
+		dockerPort:  config.DockerPort,
 		harbor:      config.HarborHost,
 		harborProto: config.HarborProto,
 	}
@@ -63,7 +66,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 	if ps.scheduler == nil {
 		sConfig := SchedulerConfig{
 			DockerHost: ps.dockerdHost,
-			HPort:      2375,
+			HPort:      ps.dockerPort,
 			Harbor:     ps.harbor,
 		}
 		ps.scheduler = NewScheduler(ctx, sConfig)

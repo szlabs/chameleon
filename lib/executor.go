@@ -23,7 +23,7 @@ type Environment struct {
 }
 
 //NewExecutor ...
-func NewExecutor(dockerdHost string, hPort int32) *Executor {
+func NewExecutor(dockerdHost string, hPort int) *Executor {
 	dHost := ""
 	if hPort > 0 {
 		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)

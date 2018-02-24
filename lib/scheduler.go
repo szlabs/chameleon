@@ -17,7 +17,7 @@ type ProxyTarget string
 //SchedulerConfig ...
 type SchedulerConfig struct {
 	DockerHost string
-	HPort      int32
+	HPort      int
 	Harbor     string
 }
 
