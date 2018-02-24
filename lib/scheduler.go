@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -16,28 +17,33 @@ type ProxyTarget string
 
 //SchedulerConfig ...
 type SchedulerConfig struct {
-	DockerHost string
-	HPort      int
-	Harbor     string
-	Namespace  string //use 'npm-registry' now
+	DockerHost  string
+	HPort       int
+	Harbor      string
+	Namespace   string //use 'npm-registry' now
+	HarborProto string
 }
 
 //Scheduler ...
 type Scheduler struct {
-	pool     *RuntimePool
-	executor *Executor
-	packer   *Packer
-	ctx      context.Context
-	drivers  map[string]ScheduleDriver
+	pool        *RuntimePool
+	executor    *Executor
+	packer      *Packer
+	ctx         context.Context
+	drivers     map[string]ScheduleDriver
+	registryAPI string
+	namespace   string
 }
 
 //NewScheduler ...
 func NewScheduler(ctx context.Context, cfg SchedulerConfig) *Scheduler {
 	return &Scheduler{
-		pool:     NewRuntimePool(),
-		executor: NewExecutor(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
-		packer:   NewPacker(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
-		ctx:      ctx,
+		pool:        NewRuntimePool(),
+		executor:    NewExecutor(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
+		packer:      NewPacker(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
+		ctx:         ctx,
+		registryAPI: fmt.Sprintf("%s://%s/api", cfg.HarborProto, cfg.Harbor),
+		namespace:   cfg.Namespace,
 	}
 }
 
@@ -66,7 +72,10 @@ func (s *Scheduler) Start() {
 	}()
 
 	s.drivers = make(map[string]ScheduleDriver)
-	s.drivers[registryTypeNpm] = &NpmScheduleDriver{}
+	s.drivers[registryTypeNpm] = &NpmScheduleDriver{
+		RegistryAPI:       s.registryAPI,
+		RegistryNamespace: s.namespace,
+	}
 
 	log.Println("Scheduler is started")
 }
@@ -192,7 +201,10 @@ type ScheduleDriver interface {
 }
 
 //NpmScheduleDriver ...
-type NpmScheduleDriver struct{}
+type NpmScheduleDriver struct {
+	RegistryAPI       string
+	RegistryNamespace string
+}
 
 //Schedule ...
 func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
@@ -222,9 +234,12 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	requestPath := meta.Metadata["path"]
 	command := meta.Metadata["command"]
 	if command == "view" || command == "install" {
-		//hardcode
-		policy.Image = strings.TrimPrefix(requestPath, "/")
-		policy.Tag = "0.9.100"
+		repo := strings.TrimPrefix(requestPath, "/")
+		tag := "0.9.100" //hard code
+		if checkImageExisting(nsd.RegistryAPI, nsd.RegistryNamespace, repo, tag) {
+			policy.Image = repo
+			policy.Tag = tag
+		}
 		policy.Rebuild = nil
 		policy.UseHub = false
 	}
@@ -237,10 +252,29 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	}
 
 	if command == "publish" {
+		repo := strings.TrimPrefix(requestPath, "/")
+		tag := "0.9.100" //hard code
+		if checkImageExisting(nsd.RegistryAPI, nsd.RegistryNamespace, repo, tag) {
+			policy.Image = repo
+			policy.Tag = tag
+			policy.UseHub = false
+		}
 		policy.Rebuild.Image = strings.TrimPrefix(requestPath, "/")
 		policy.Rebuild.Tag = "0.9.100"
 		policy.Rebuild.NeedPush = true
 	}
 
 	return policy
+}
+
+func checkImageExisting(api, namespace, image, tag string) bool {
+	url := fmt.Sprintf("%s%s%s%s%s%s%s", api, "/repositories/", namespace, "/", image, "tags", tag)
+	log.Printf("Check image existing: %s", url)
+	if resp, err := http.Get(url); err == nil {
+		if resp.StatusCode == http.StatusOK {
+			return true
+		}
+	}
+
+	return false
 }
