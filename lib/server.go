@@ -18,6 +18,8 @@ type ServerConfig struct {
 	Host        string
 	Port        int
 	DockerdHost string
+	HarborHost  string
+	HarborProto string
 }
 
 //ProxyServer serves the requests
@@ -26,12 +28,12 @@ type ProxyServer struct {
 	proxy       *httputil.ReverseProxy
 	host        string
 	port        int
-	backend     string
 	dockerdHost string
+	harbor      string
+	harborProto string
 	running     bool
 	reqParser   *ParserChain
-	executor    *Executor
-	packer      *Packer
+	scheduler   *Scheduler
 }
 
 //NewProxyServer create new server instance
@@ -40,11 +42,13 @@ func NewProxyServer(config ServerConfig) *ProxyServer {
 		host:        config.Host,
 		port:        config.Port,
 		dockerdHost: config.DockerdHost,
+		harbor:      config.HarborHost,
+		harborProto: config.HarborProto,
 	}
 }
 
 //Start the proxy server
-func (ps *ProxyServer) Start() error {
+func (ps *ProxyServer) Start(ctx context.Context) error {
 	if ps.running {
 		return nil
 	}
@@ -56,12 +60,14 @@ func (ps *ProxyServer) Start() error {
 		return err
 	}
 
-	if ps.executor == nil {
-		ps.executor = NewExecutor(ps.dockerdHost, 2375)
-	}
-
-	if ps.packer == nil {
-		ps.packer = NewPacker(ps.dockerdHost, 2375, "10.112.122.204")
+	if ps.scheduler == nil {
+		sConfig := SchedulerConfig{
+			DockerHost: ps.dockerdHost,
+			HPort:      2375,
+			Harbor:     ps.harbor,
+		}
+		ps.scheduler = NewScheduler(ctx, sConfig)
+		ps.scheduler.Start()
 	}
 
 	if ps.proxy == nil {
@@ -81,6 +87,7 @@ func (ps *ProxyServer) Start() error {
 			Transport: t,
 			Director: func(req *http.Request) {
 				log.Printf("PROXY: %s %s\n", req.Method, req.URL.String())
+
 				//Parse request
 				if ps.reqParser != nil {
 					meta, err := ps.reqParser.Parse(req)
@@ -90,20 +97,29 @@ func (ps *ProxyServer) Start() error {
 					}
 
 					if meta.HasHit {
-						log.Printf("Proxy traffic: %#v\n", meta)
-						runtime, err := ps.executor.Exec(meta)
-						if err != nil {
-							log.Fatalf("Exec error: %s\n", err)
-							return
-						}
-						/*runtime := Environment{
-							Target:    "10.160.162.129:52198",
-							RuntimeID: "594ab4ebd69bfc6edc7520949c3e4f76c445edda8dd00a3c1ade799d49d63d55",
-						}*/
+						var rawTarget string
+						if meta.RegistryType == registryTypeNpm {
+							env, err := ps.scheduler.Schedule(meta)
+							if err != nil {
+								log.Fatalf("schedule error: %s\n", err)
+								return
+							}
+							rawTarget = fmt.Sprintf("%s%s", "http://", env.Target)
 
-						log.Printf("Exec runtime: %#v\n", runtime)
-						//Proxy
-						target, err := url.Parse(fmt.Sprintf("%s%s", "http://", runtime.Target))
+							if env.Rebuild != nil {
+								h, err := env.Rebuild.Encode()
+								if err != nil {
+									log.Fatalf("set rebuild header failed: %s", err)
+									return
+								}
+								req.Header.Set("registry-factory", h)
+							}
+						} else {
+							//Treat as harbor
+							rawTarget = fmt.Sprintf("%s://%s", ps.harborProto, ps.harbor)
+						}
+
+						target, err := url.Parse(rawTarget)
 						if err != nil {
 							log.Fatalf("Url parse error: %s\n", err)
 							return
@@ -121,41 +137,21 @@ func (ps *ProxyServer) Start() error {
 							// explicitly disable User-Agent so it's not set to default value
 							req.Header.Set("User-Agent", "")
 						}
-						//Add additional info
-						req.Header.Set("harbor-runtime", runtime.RuntimeID)
-						req.Header.Set("runtime-stage", meta.RequestStage)
-						req.Header.Add("container-image", meta.Image)
-						req.Header.Add("container-image", meta.Tag)
 					}
 				}
 				//do nothing
 			},
 
 			ModifyResponse: func(res *http.Response) error {
-				log.Printf("ModifyResponse: %#v\n", res.Header)
+				rebuildPolicyHeader := res.Request.Header.Get("registry-factory")
+				if len(rebuildPolicyHeader) > 0 {
+					rebuildPolicy := &BuildPolicy{}
+					err := rebuildPolicy.Decode(rebuildPolicyHeader)
+					if err != nil {
+						return err
+					}
 
-				runtimeID := strings.TrimSpace(res.Request.Header.Get("harbor-runtime"))
-				defer func() {
-					if len(runtimeID) > 0 {
-						if err := ps.executor.Destroy(runtimeID); err != nil {
-							log.Fatalf("Destroy runtime error: %s\n", err)
-						} else {
-							log.Printf("Destroy runtime: %s\n", runtimeID)
-						}
-					}
-				}()
-				image := strings.TrimSpace(res.Request.Header.Get("container-image"))
-				runtimeStage := strings.TrimSpace(res.Request.Header.Get("runtime-stage"))
-				if runtimeStage == requestStageSession {
-					//Build
-					if err := ps.packer.BuildLocal(runtimeID, image, ""); err != nil {
-						return err
-					}
-				}
-				if runtimeStage == requestStagePack {
-					if err := ps.packer.Build(runtimeID, "experiment-npm-package", fmt.Sprintf("v%d", time.Now().UnixNano())); err != nil {
-						return err
-					}
+					return ps.scheduler.Rebuild(rebuildPolicy)
 				}
 
 				return nil

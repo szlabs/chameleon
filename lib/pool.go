@@ -1,7 +1,6 @@
 package lib
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +13,7 @@ const (
 //Runtime ...
 type Runtime struct {
 	ID         string
+	Target     ProxyTarget
 	ActiveTime int64
 }
 
@@ -32,38 +32,48 @@ func NewRuntimePool() *RuntimePool {
 }
 
 //Index ...
-func (rp *RuntimePool) Index(prefix, ID string) (*Runtime, bool) {
+func (rp *RuntimePool) Index(key string) (*Runtime, bool) {
 	rp.lock.RLock()
 	defer rp.lock.RUnlock()
 
-	r, ok := rp.pool[giveMeKey(prefix, ID)]
+	r, ok := rp.pool[key]
 
 	return r, ok
 }
 
-//Use ...
-func (rp *RuntimePool) Use(prefix, ID string) (*Runtime, error) {
-	if len(ID) == 0 {
-		return nil, errors.New("empty ID")
-	}
+//Put ...
+func (rp *RuntimePool) Put(key string, ID string, target ProxyTarget) (*Runtime, error) {
 	rp.lock.Lock()
 	defer rp.lock.Unlock()
 
-	r, ok := rp.pool[giveMeKey(prefix, ID)]
+	if _, ok := rp.pool[key]; ok {
+		return nil, fmt.Errorf("%s existing", key)
+	}
+
+	r := &Runtime{
+		ActiveTime: time.Now().Unix(),
+		ID:         ID,
+		Target:     target,
+	}
+
+	rp.pool[key] = r
+
+	return r, nil
+}
+
+//Use ...
+func (rp *RuntimePool) Use(key string) (*Runtime, error) {
+	rp.lock.Lock()
+	defer rp.lock.Unlock()
+
+	r, ok := rp.pool[key]
 	if ok {
 		//Update active time
 		r.ActiveTime = time.Now().Unix()
 		return r, nil
 	}
 
-	r = &Runtime{
-		ActiveTime: time.Now().Unix(),
-		ID:         ID,
-	}
-
-	rp.pool[giveMeKey(prefix, ID)] = r
-
-	return r, nil
+	return r, fmt.Errorf("%s not existing", key)
 }
 
 //Remove ...

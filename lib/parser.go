@@ -7,62 +7,54 @@ import (
 	"strings"
 )
 
+const (
+	registryTypeNpm   = "npm"
+	registryTypeImage = "harbor"
+)
+
+//RequestMeta ...
+type RequestMeta struct {
+	RegistryType string
+	HasHit       bool
+	Metadata     map[string]string
+}
+
 //Parser ...
 type Parser func(req *http.Request) (RequestMeta, error)
 
 //NpmParser ...
 func NpmParser(req *http.Request) (RequestMeta, error) {
 	userAgent := req.Header.Get("User-Agent")
-	if strings.Contains(userAgent, "npm/") {
-		//Hit
+	if strings.Contains(userAgent, "npm") {
 		npmCmd := req.Header.Get("Referer")
 		if len(npmCmd) > 0 {
+			//Hit only when the command existing
 			meta := RequestMeta{
 				RegistryType: registryTypeNpm,
-				RequestStage: requestStageRun,
 				HasHit:       true,
-				BoundPorts:   []int32{80},
+				Metadata:     make(map[string]string),
 			}
 			commands := strings.Split(npmCmd, " ")
-			if len(commands) > 0 {
-				command := strings.TrimSpace(commands[0])
-				if command == "login" ||
-					command == "adduser" ||
-					command == "add-user" {
-					meta.RequestStage = requestStageSession
-					meta.Image = "stevenzou/npm-registry"
-					meta.Tag = "latest"
-				} else if command == "publish" {
-					meta.RequestStage = requestStagePack
-					meta.Image = "stevenzou/npm-registry"
-					meta.Tag = "latest"
-				} else {
-					meta.RequestStage = requestStageRun
-					if len(commands) > 1 {
-						moreInfo := strings.TrimSpace(commands[1])
-						if strings.Contains(moreInfo, "@") {
-							imageInfos := strings.Split(moreInfo, "@")
-							if len(imageInfos) >= 2 {
-								//SHOULD confirm if the image existing
-								//or use the default base one
-								meta.Image = strings.TrimSpace(imageInfos[0])
-								meta.Tag = strings.TrimSpace(imageInfos[1])
-							}
-						}
-					}
+			command := strings.TrimSpace(commands[0])
+			meta.Metadata["command"] = command
+			meta.Metadata["path"] = req.RequestURI
+			meta.Metadata["extra"] = strings.TrimPrefix(npmCmd, command)
+			meta.Metadata["session"] = req.Header.Get("Npm-Session")
 
-					if len(meta.Image) == 0 {
-						meta.Image = "stevenzou/npm-registry"
-						meta.Tag = "latest"
-					}
-				}
-
-				return meta, nil
-			}
+			return meta, nil
 		}
 	}
 
 	return RequestMeta{}, nil
+}
+
+//HarborParser ...
+//Treat as deafault now
+func HarborParser(req *http.Request) (RequestMeta, error) {
+	return RequestMeta{
+		RegistryType: registryTypeImage,
+		HasHit:       true, //default handler
+	}, nil
 }
 
 //ParserChain ...
@@ -107,7 +99,11 @@ func (pc *ParserChain) Init() error {
 	pc.head = nil
 	pc.tail = nil
 
-	return pc.Register(NpmParser)
+	if err := pc.Register(NpmParser); err != nil {
+		return err
+	}
+
+	return pc.Register(HarborParser)
 }
 
 //Register ...

@@ -18,15 +18,15 @@ type Executor struct {
 
 //Environment ...
 type Environment struct {
-	Target    string
+	Target    ProxyTarget
 	RuntimeID string
 }
 
 //NewExecutor ...
 func NewExecutor(dockerdHost string, hPort int32) *Executor {
-	dHost := dockerdHost
+	dHost := ""
 	if hPort > 0 {
-		dHost = fmt.Sprintf("tcp://%s:%d", dHost, hPort)
+		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)
 	}
 	return &Executor{
 		hostOn: dockerdHost,
@@ -37,19 +37,19 @@ func NewExecutor(dockerdHost string, hPort int32) *Executor {
 }
 
 //Exec ...
-func (e *Executor) Exec(meta RequestMeta) (Environment, error) {
-	if len(meta.Image) == 0 {
+func (e *Executor) Exec(policy *SchedulePolicy) (Environment, error) {
+	if len(policy.Image) == 0 {
 		return Environment{}, errors.New("empty image")
 	}
 
-	if len(meta.Tag) == 0 {
-		meta.Tag = "latest"
+	if len(policy.Tag) == 0 {
+		policy.Tag = "latest"
 	}
 
 	//Only keep the 1st port as target port
 	bindPorts := []string{}
 	targetPort := 0
-	for _, port := range meta.BoundPorts {
+	for _, port := range policy.BoundPorts {
 		portOnHost := giveMePort()
 		if targetPort == 0 {
 			targetPort = (int)(portOnHost)
@@ -58,7 +58,7 @@ func (e *Executor) Exec(meta RequestMeta) (Environment, error) {
 		bindPorts = append(bindPorts, boundPort)
 	}
 
-	runID, err := e.docker.Run(fmt.Sprintf("%s:%s", meta.Image, meta.Tag), "", "", true, true, bindPorts)
+	runID, err := e.docker.Run(fmt.Sprintf("%s:%s", policy.Image, policy.Tag), "", "", true, true, bindPorts)
 	if err != nil {
 		return Environment{}, err
 	}
@@ -89,7 +89,7 @@ func (e *Executor) Exec(meta RequestMeta) (Environment, error) {
 	select {
 	case <-done:
 		return Environment{
-			Target:    fmt.Sprintf("%s:%d", e.hostOn, targetPort),
+			Target:    (ProxyTarget)(fmt.Sprintf("%s:%d", e.hostOn, targetPort)),
 			RuntimeID: runID,
 		}, nil
 	case err := <-errCh:

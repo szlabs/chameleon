@@ -11,14 +11,17 @@ import (
 
 func main() {
 	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
 	cfg := lib.ServerConfig{
 		Port:        7878,
 		DockerdHost: "10.160.162.129",
+		HarborProto: "https",
+		HarborHost:  "10.112.122.204",
 	}
 
 	s := lib.NewProxyServer(cfg)
 	go func() {
-		s.Start()
+		s.Start(ctx)
 	}()
 
 	log.Printf("Server is listening at %s:%d...\n", cfg.Host, cfg.Port)
@@ -35,6 +38,8 @@ func main() {
 			log.Printf("Failed to shutdown server with error: %s\n", err)
 		}
 	}
+
+	cancel()
 
 	log.Println("Server is shutdown")
 }
