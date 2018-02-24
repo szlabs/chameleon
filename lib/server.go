@@ -151,15 +151,17 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 			},
 
 			ModifyResponse: func(res *http.Response) error {
-				rebuildPolicyHeader := res.Request.Header.Get("registry-factory")
-				if len(rebuildPolicyHeader) > 0 {
-					rebuildPolicy := &BuildPolicy{}
-					err := rebuildPolicy.Decode(rebuildPolicyHeader)
-					if err != nil {
-						return err
-					}
+				if res.StatusCode >= http.StatusOK && res.StatusCode <= http.StatusAccepted {
+					rebuildPolicyHeader := res.Request.Header.Get("registry-factory")
+					if len(rebuildPolicyHeader) > 0 {
+						rebuildPolicy := &BuildPolicy{}
+						err := rebuildPolicy.Decode(rebuildPolicyHeader)
+						if err != nil {
+							return err
+						}
 
-					return ps.scheduler.Rebuild(rebuildPolicy)
+						return ps.scheduler.Rebuild(rebuildPolicy)
+					}
 				}
 
 				return nil
