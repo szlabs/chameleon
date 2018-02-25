@@ -2,10 +2,10 @@ package lib
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +21,12 @@ type RequestMeta struct {
 	RegistryType string
 	HasHit       bool
 	Metadata     map[string]string
+}
+
+type npmPackMeta struct {
+	Tags struct {
+		Latest string `json:"latest"`
+	} `json:"dist-tags"`
 }
 
 //Parser ...
@@ -51,7 +57,13 @@ func NpmParser(req *http.Request) (RequestMeta, error) {
 				if err != nil {
 					return RequestMeta{}, err
 				}
-				log.Printf("========PUBLISH: %s", buf)
+				npmMetaJSON := &npmPackMeta{}
+				if err := json.Unmarshal(buf, npmMetaJSON); err != nil {
+					return RequestMeta{}, err
+				}
+
+				meta.Metadata["extra"] = npmMetaJSON.Tags.Latest
+
 				body := ioutil.NopCloser(bytes.NewBuffer(buf))
 				req.Body = body
 				req.ContentLength = int64(len(buf))

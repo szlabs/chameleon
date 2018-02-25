@@ -268,14 +268,15 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 
 	if command == "publish" {
 		repo := strings.TrimPrefix(requestPath, "/")
-		tag := "0.9.100" //hard code
+		tag := meta.Metadata["extra"]
+		log.Printf("===Publishing===: %s@%s", repo, tag)
 		if nsd.checkImageExisting(repo, tag) {
 			policy.Image = repo
 			policy.Tag = tag
 			policy.UseHub = false
 		}
 		policy.Rebuild.Image = strings.TrimPrefix(requestPath, "/")
-		policy.Rebuild.Tag = "0.9.100"
+		policy.Rebuild.Tag = meta.Metadata["extra"]
 		policy.Rebuild.NeedPush = true
 	}
 
