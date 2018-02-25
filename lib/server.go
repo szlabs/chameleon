@@ -148,7 +148,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 							req.Header.Set("User-Agent", "")
 						}
 
-						log.Printf("===PROXY TO===:%s\n", target.String())
+						log.Printf("===PROXY TO===:%s\n", req.URL.String())
 					}
 				}
 				//do nothing

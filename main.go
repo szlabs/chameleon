@@ -16,7 +16,7 @@ func main() {
 		Port:        7878,
 		DockerdHost: "10.160.162.129",
 		HarborProto: "https",
-		HarborHost:  "10.112.122.204",
+		HarborHost:  "10.160.178.186",
 	}
 
 	s := lib.NewProxyServer(cfg)

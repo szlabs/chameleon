@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	idleThreshold = 60 //seconds
+	idleThreshold = 120 //seconds
 )
 
 //Runtime ...

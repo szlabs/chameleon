@@ -1,9 +1,13 @@
 package lib
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -40,6 +44,19 @@ func NpmParser(req *http.Request) (RequestMeta, error) {
 			meta.Metadata["path"] = req.URL.String()
 			meta.Metadata["extra"] = strings.TrimSpace(strings.TrimPrefix(npmCmd, command))
 			meta.Metadata["session"] = req.Header.Get("Npm-Session")
+
+			//Read more info
+			if command == "publish" {
+				buf, err := ioutil.ReadAll(req.Body)
+				if err != nil {
+					return RequestMeta{}, err
+				}
+				log.Printf("========PUBLISH: %s", buf)
+				body := ioutil.NopCloser(bytes.NewBuffer(buf))
+				req.Body = body
+				req.ContentLength = int64(len(buf))
+				req.Header.Set("Content-Length", strconv.Itoa(len(buf)))
+			}
 
 			return meta, nil
 		}
