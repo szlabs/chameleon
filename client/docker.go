@@ -77,7 +77,7 @@ func (dc *DockerClient) Login(userName, password string, uri string) error {
 }
 
 //Run containers
-func (dc *DockerClient) Run(image, name, cmd string, isInteractive, asDaemon bool, bindPorts []string) (string, error) {
+func (dc *DockerClient) Run(image, name, cmd string, isInteractive, asDaemon bool, bindPorts []string, env map[string]string) (string, error) {
 	if len(strings.TrimSpace(image)) == 0 {
 		return "", errors.New("image must be specified")
 	}
@@ -101,6 +101,12 @@ func (dc *DockerClient) Run(image, name, cmd string, isInteractive, asDaemon boo
 
 	if asDaemon {
 		args = append(args, "-d")
+	}
+
+	for k, v := range env {
+		//TODO: not support escaping quotes.
+		envStr := fmt.Sprintf(`%s=%s`, k, v)
+		args = append(args, "-e", envStr)
 	}
 
 	args = append(args, image)

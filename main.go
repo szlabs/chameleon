@@ -15,7 +15,8 @@ func main() {
 	cfg := lib.ServerConfig{
 		Port:        7878,
 		DockerdHost: "10.160.162.129",
-		HarborProto: "https",
+		DockerPort:  2375,
+		HarborProto: "http",
 		HarborHost:  "10.160.178.186",
 	}
 

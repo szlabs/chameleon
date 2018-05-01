@@ -69,7 +69,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 			DockerHost:  ps.dockerdHost,
 			HPort:       ps.dockerPort,
 			Harbor:      ps.harbor,
-			Namespace:   "npm-registry", //use hardcode now
+			Namespace:   "registry-factory", //use hardcode now
 			HarborProto: ps.harborProto,
 		}
 		ps.scheduler = NewScheduler(ctx, sConfig)
@@ -108,7 +108,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 
 					if meta.HasHit {
 						var rawTarget string
-						if meta.RegistryType == registryTypeNpm {
+						if meta.RegistryType == registryTypeNpm || meta.RegistryType == registryTypePip {
 							env, err := ps.scheduler.Schedule(meta)
 							if err != nil {
 								log.Fatalf("schedule error: %s\n", err)
@@ -124,6 +124,8 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 								}
 								req.Header.Set("registry-factory", h)
 							}
+							//	} else if meta.RegistryType == registryTypePip {
+							//			log.Printf("TODO!!\n")
 						} else {
 							//Treat as harbor
 							rawTarget = fmt.Sprintf("%s://%s", ps.harborProto, ps.harbor)
@@ -141,7 +143,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 						if targetQuery == "" || req.URL.RawQuery == "" {
 							req.URL.RawQuery = targetQuery + req.URL.RawQuery
 						} else {
-							req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
+							req.URL.RawQuery = targetQuery + req.URL.RawQuery
 						}
 						if _, ok := req.Header["User-Agent"]; !ok {
 							// explicitly disable User-Agent so it's not set to default value

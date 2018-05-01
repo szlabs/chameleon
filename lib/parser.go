@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	registryTypePip   = "pip"
 	registryTypeNpm   = "npm"
 	registryTypeImage = "harbor"
 )
@@ -31,6 +32,37 @@ type npmPackMeta struct {
 
 //Parser ...
 type Parser func(req *http.Request) (RequestMeta, error)
+
+//PipParser ...
+func PipParser(req *http.Request) (RequestMeta, error) {
+	meta := RequestMeta{}
+	userAgent := req.Header.Get("User-Agent")
+	if strings.Contains(userAgent, "pip") {
+		if req.Method == http.MethodGet {
+			path := req.URL.Path
+			pkg := ""
+			if strings.HasPrefix(path, "/packages/") && path != "/packages/" {
+				//TODO:Very rough guess
+				p := strings.TrimPrefix(path, "/packages/")
+				pkg = strings.Split(p, "-")[0]
+			} else {
+				if strings.HasPrefix(path, "/simple") && path != "/simple/" {
+					path = strings.TrimPrefix(path, "/simple")
+				}
+				pkg = strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/")
+			}
+			fmt.Printf("DEBUG: PIP install pkg: %s\n", pkg)
+			meta.RegistryType = registryTypePip
+			meta.HasHit = true
+			meta.Metadata = map[string]string{
+				"package": pkg,
+				"command": "install",
+			}
+		}
+
+	}
+	return meta, nil
+}
 
 //NpmParser ...
 func NpmParser(req *http.Request) (RequestMeta, error) {
@@ -129,6 +161,9 @@ func (pc *ParserChain) Init() error {
 	pc.tail = nil
 
 	if err := pc.Register(NpmParser); err != nil {
+		return err
+	}
+	if err := pc.Register(PipParser); err != nil {
 		return err
 	}
 
