@@ -67,7 +67,7 @@ func (e *Executor) Exec(policy *SchedulePolicy) (Environment, error) {
 		image = fmt.Sprintf("%s/%s/%s", e.harbor, e.namespace, image)
 	}
 
-	runID, err := e.docker.Run(image, "", "", true, true, bindPorts)
+	runID, err := e.docker.Run(image, "", "", true, true, bindPorts, policy.EnvVars)
 	if err != nil {
 		return Environment{}, err
 	}

@@ -74,6 +74,7 @@ func (s *Scheduler) Start() {
 
 	s.drivers = make(map[string]ScheduleDriver)
 	s.drivers[registryTypeNpm] = NewNpmScheduleDriver(s.registryAPI, s.namespace)
+	s.drivers[registryTypePip] = NewPipScheduleDriver(s.registryAPI, "pip-project")
 
 	log.Println("Scheduler is started")
 }
@@ -163,6 +164,7 @@ type SchedulePolicy struct {
 	ReuseIdentity string
 	BoundPorts    []int
 	Rebuild       *BuildPolicy
+	EnvVars       map[string]string
 }
 
 //BuildPolicy ...
@@ -196,6 +198,53 @@ func (bp *BuildPolicy) Decode(data string) error {
 type ScheduleDriver interface {
 	//Schedule ...
 	Schedule(meta RequestMeta) *SchedulePolicy
+}
+
+//PipScheduleDriver ...
+type PipScheduleDriver struct {
+	registryAPI       string
+	registryNamespace string
+	httpClient        *http.Client
+}
+
+//NewNpmScheduleDriver ...
+func NewPipScheduleDriver(registryAPI, registryNamespace string) *PipScheduleDriver {
+	return &PipScheduleDriver{
+		registryAPI:       registryAPI,
+		registryNamespace: registryNamespace,
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+	}
+}
+
+//Schedule ...
+func (psd *PipScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
+	if !meta.HasHit || meta.RegistryType != registryTypePip {
+		return nil
+	}
+	if meta.Metadata["command"] == "install" {
+		//TODO: change
+		image := fmt.Sprintf("pip-project/pypi-%s", meta.Metadata["package"])
+		//Default policy
+		policy := &SchedulePolicy{
+			Image:         image,
+			Tag:           "dev",
+			BoundPorts:    []int{80},
+			ReuseIdentity: meta.Metadata["package"],
+			EnvVars:       map[string]string{"PYPI_EXTRA": "--disable-fallback", "PYPI_ROOT": "/pypi"},
+		}
+		return policy
+
+	} else {
+		log.Printf("Unknown command for pip package: %s\n", meta.Metadata["command"])
+	}
+
+	return nil
 }
 
 //NpmScheduleDriver ...
@@ -251,7 +300,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 		extraInfo := meta.Metadata["extra"]
 		repo := strings.TrimPrefix(requestPath, "/")
 		tag := strings.TrimSpace(strings.TrimPrefix(extraInfo, repo+"@"))
-		if nsd.checkImageExisting(repo, tag) {
+		if checkImageExisting(nsd.registryAPI, nsd.registryNamespace, repo, tag, nsd.httpClient) {
 			policy.Image = repo
 			policy.Tag = tag
 			policy.UseHub = false
@@ -270,7 +319,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 		repo := strings.TrimPrefix(requestPath, "/")
 		tag := meta.Metadata["extra"]
 		log.Printf("===Publishing===: %s@%s", repo, tag)
-		if nsd.checkImageExisting(repo, tag) {
+		if checkImageExisting(nsd.registryAPI, nsd.registryNamespace, repo, tag, nsd.httpClient) {
 			policy.Image = repo
 			policy.Tag = tag
 			policy.UseHub = false
@@ -283,9 +332,9 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	return policy
 }
 
-func (nsd *NpmScheduleDriver) checkImageExisting(image, tag string) bool {
-	url := fmt.Sprintf("%s%s%s%s%s%s%s", nsd.registryAPI, "/repositories/", nsd.registryNamespace, "/", image, "/tags/", tag)
-	resp, err := nsd.httpClient.Get(url)
+func checkImageExisting(registryAPI, registryNamespace, image, tag string, client *http.Client) bool {
+	url := fmt.Sprintf("%s%s%s%s%s%s%s", registryAPI, "/repositories/", registryNamespace, "/", image, "/tags/", tag)
+	resp, err := client.Get(url)
 	if err == nil {
 		if resp.StatusCode == http.StatusOK {
 			log.Printf("Image %s:%s existing\n", image, tag)
