@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -10,37 +11,41 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
-	cfg := lib.ServerConfig{
-		Port:        7878,
-		DockerdHost: "10.160.162.129",
-		DockerPort:  2375,
-		HarborProto: "http",
-		HarborHost:  "10.160.178.186",
+	yamlFile := flag.String("c", "", "config yaml file")
+	flag.Parse()
+
+	//Load config
+	if err := lib.Config.Load(*yamlFile); err != nil {
+		log.Fatal(err)
 	}
 
-	s := lib.NewProxyServer(cfg)
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	s := lib.NewProxyServer(ctx)
+	done := make(chan error, 1)
 	go func() {
-		s.Start(ctx)
+		if err := s.Start(); err != nil {
+			done <- err
+		}
 	}()
 
-	log.Printf("Server is listening at %s:%d...\n", cfg.Host, cfg.Port)
+	log.Printf("Server is listening at %s:%d...\n", lib.Config.Host, lib.Config.Port)
+	defer log.Println("Server is shutdown")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, os.Kill)
 
 	select {
+	case err := <-done:
+		log.Fatalf("Server error: %s\n", err)
 	case <-ctx.Done():
 		log.Println("ctx done!")
 	case <-sig:
 		log.Println("Gracefully shutting down the server...")
-		if err := s.Stop(ctx); err != nil {
+		if err := s.Stop(); err != nil {
 			log.Printf("Failed to shutdown server with error: %s\n", err)
 		}
 	}
-
-	cancel()
-
-	log.Println("Server is shutdown")
 }

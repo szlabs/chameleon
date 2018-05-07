@@ -16,35 +16,22 @@ import (
 //ProxyTarget ...
 type ProxyTarget string
 
-//SchedulerConfig ...
-type SchedulerConfig struct {
-	DockerHost  string
-	HPort       int
-	Harbor      string
-	Namespace   string //use 'npm-registry' now
-	HarborProto string
-}
-
 //Scheduler ...
 type Scheduler struct {
-	pool        *RuntimePool
-	executor    *Executor
-	packer      *Packer
-	ctx         context.Context
-	drivers     map[string]ScheduleDriver
-	registryAPI string
-	namespace   string
+	pool     *RuntimePool
+	executor *Executor
+	packer   *Packer
+	ctx      context.Context
+	drivers  map[string]ScheduleDriver
 }
 
 //NewScheduler ...
-func NewScheduler(ctx context.Context, cfg SchedulerConfig) *Scheduler {
+func NewScheduler(ctx context.Context) *Scheduler {
 	return &Scheduler{
-		pool:        NewRuntimePool(),
-		executor:    NewExecutor(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
-		packer:      NewPacker(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
-		ctx:         ctx,
-		registryAPI: fmt.Sprintf("%s://%s/api", cfg.HarborProto, cfg.Harbor),
-		namespace:   cfg.Namespace,
+		pool:     NewRuntimePool(),
+		executor: NewExecutor(Config.Dockerd.Host, Config.Dockerd.Port, Config.Harbor.Host),
+		packer:   NewPacker(Config.Dockerd.Host, Config.Dockerd.Port, Config.Harbor.Host),
+		ctx:      ctx,
 	}
 }
 
@@ -72,9 +59,10 @@ func (s *Scheduler) Start() {
 		}
 	}()
 
+	registryAPI := fmt.Sprintf("%s://%s/api", Config.Harbor.Protocol, Config.Harbor.Host)
 	s.drivers = make(map[string]ScheduleDriver)
-	s.drivers[registryTypeNpm] = NewNpmScheduleDriver(s.registryAPI, s.namespace)
-	s.drivers[registryTypePip] = NewPipScheduleDriver(s.registryAPI, "pip-project")
+	s.drivers[registryTypeNpm] = NewNpmScheduleDriver(registryAPI, Config.NpmRegistry.Namespace)
+	s.drivers[registryTypePip] = NewPipScheduleDriver(registryAPI, Config.PipRegistry.Namespace)
 
 	log.Println("Scheduler is started")
 }
@@ -100,13 +88,15 @@ func (s *Scheduler) Schedule(meta RequestMeta) (ServeEnvironment, error) {
 				policy.Rebuild.BaseContainer = r.ID
 			}
 			return ServeEnvironment{
-				Target:  r.Target,
-				Rebuild: policy.Rebuild,
+				Target:      r.Target,
+				Rebuild:     policy.Rebuild,
+				InstanceKey: key,
 			}, nil
 		}
 	}
 
 	//Create
+	s.executor.SetNamespace(policy.Namespace)
 	env, err := s.executor.Exec(policy)
 	if err != nil {
 		return ServeEnvironment{}, err
@@ -118,14 +108,24 @@ func (s *Scheduler) Schedule(meta RequestMeta) (ServeEnvironment, error) {
 	}
 	key = fmt.Sprintf("%s:%s", meta.RegistryType, key)
 
-	s.pool.Put(key, env.RuntimeID, env.Target)
+	r := &Runtime{
+		ID:         env.RuntimeID,
+		Target:     env.Target,
+		ActiveTime: time.Now().Unix(),
+		Image:      fmt.Sprintf("%s:%s", policy.Image, policy.Tag),
+	}
+	if err := s.pool.Put(key, r); err != nil {
+		//let's see if problem will appear
+		log.Printf("Pool error: %s\n", err)
+	}
 
 	if policy.Rebuild != nil {
 		policy.Rebuild.BaseContainer = env.RuntimeID
 	}
 	return ServeEnvironment{
-		Target:  env.Target,
-		Rebuild: policy.Rebuild,
+		Target:      env.Target,
+		Rebuild:     policy.Rebuild,
+		InstanceKey: key,
 	}, nil
 }
 
@@ -144,16 +144,29 @@ func (s *Scheduler) Rebuild(policy *BuildPolicy) error {
 	}
 
 	if policy.NeedPush {
+		s.packer.SetNamespace(policy.Namespace)
 		return s.packer.Build(policy.BaseContainer, policy.Image, policy.Tag)
 	}
 
 	return s.packer.BuildLocal(policy.BaseContainer, policy.Image, policy.Tag)
 }
 
+//FreeRuntime mark the instance as idle
+func (s *Scheduler) FreeRuntime(key string) error {
+	s.pool.SetIdle(key)
+	return nil
+}
+
+//GetRuntimes get all runtimes including the destroyed ones
+func (s *Scheduler) GetRuntimes() []*Runtime {
+	return s.pool.GetAll()
+}
+
 //ServeEnvironment ...
 type ServeEnvironment struct {
-	Target  ProxyTarget
-	Rebuild *BuildPolicy
+	Target      ProxyTarget
+	Rebuild     *BuildPolicy
+	InstanceKey string
 }
 
 //SchedulePolicy ...
@@ -165,6 +178,7 @@ type SchedulePolicy struct {
 	BoundPorts    []int
 	Rebuild       *BuildPolicy
 	EnvVars       map[string]string
+	Namespace     string
 }
 
 //BuildPolicy ...
@@ -173,6 +187,7 @@ type BuildPolicy struct {
 	Image         string `json:"image"`
 	Tag           string `json:"tag"`
 	NeedPush      bool   `json:"need_push"`
+	Namespace     string `json:"namespace"`
 }
 
 //Encode ...
@@ -207,7 +222,7 @@ type PipScheduleDriver struct {
 	httpClient        *http.Client
 }
 
-//NewNpmScheduleDriver ...
+//NewPipScheduleDriver ...
 func NewPipScheduleDriver(registryAPI, registryNamespace string) *PipScheduleDriver {
 	return &PipScheduleDriver{
 		registryAPI:       registryAPI,
@@ -237,12 +252,13 @@ func (psd *PipScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 			BoundPorts:    []int{80},
 			ReuseIdentity: meta.Metadata["package"],
 			EnvVars:       map[string]string{"PYPI_EXTRA": "--disable-fallback", "PYPI_ROOT": "/pypi"},
+			Namespace:     psd.registryNamespace,
 		}
 		return policy
 
-	} else {
-		log.Printf("Unknown command for pip package: %s\n", meta.Metadata["command"])
 	}
+
+	log.Printf("Unknown command for pip package: %s\n", meta.Metadata["command"])
 
 	return nil
 }
@@ -277,14 +293,16 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 
 	//Default policy
 	policy := &SchedulePolicy{
-		Image:      "stevenzou/npm-registry",
-		Tag:        "latest",
+		Image:      Config.NpmRegistry.BaseImage,
+		Tag:        Config.NpmRegistry.BaseImageTag,
 		UseHub:     true,
 		BoundPorts: []int{80},
 		Rebuild: &BuildPolicy{
-			Image: "stevenzou/npm-registry",
-			Tag:   "latest",
+			Image:     Config.NpmRegistry.BaseImage,
+			Tag:       Config.NpmRegistry.BaseImageTag,
+			Namespace: nsd.registryNamespace,
 		},
+		Namespace: nsd.registryNamespace,
 	}
 
 	//If has reuseIdentity
@@ -318,7 +336,7 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 	if command == "publish" {
 		repo := strings.TrimPrefix(requestPath, "/")
 		tag := meta.Metadata["extra"]
-		log.Printf("===Publishing===: %s@%s", repo, tag)
+		log.Printf("PUBLISH: %s@%s", repo, tag)
 		if checkImageExisting(nsd.registryAPI, nsd.registryNamespace, repo, tag, nsd.httpClient) {
 			policy.Image = repo
 			policy.Tag = tag
