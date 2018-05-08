@@ -2,7 +2,7 @@
 host: "" #Listen host
 port: 7878 #Listen port
 dockerd: #Docker runtime
-  host: "10.160.162.129"
+  host: "10.160.185.248"
   port: 2375
   admin: "admin"
   password: "Harbor12345"

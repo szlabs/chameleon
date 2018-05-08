@@ -38,6 +38,8 @@ func NewScheduler(ctx context.Context) *Scheduler {
 //Start ...
 func (s *Scheduler) Start() {
 	go func() {
+		defer log.Println("Scheduler stop")
+
 		tk := time.Tick(30 * time.Second)
 		for {
 			select {
@@ -49,11 +51,12 @@ func (s *Scheduler) Start() {
 						//Clear
 						if err := s.executor.Destroy(v.ID); err != nil {
 							log.Fatalf("garbage collection %s error: %s\n", v.ID, err)
+						}else{
+							log.Printf("Destroy container instance: %s\n", v.ID)
 						}
 					}
 				}
 			case <-s.ctx.Done():
-				log.Println("Scheduler stop")
 				return
 			}
 		}
