@@ -137,6 +137,7 @@ func (ps *ProxyServer) Start() error {
 			},
 
 			ModifyResponse: func(res *http.Response) error {
+				log.Printf("RESPONSE: %s\n", res.Status)
 				//Request served
 				//Do not care the response status code
 				instanceKey := res.Request.Header.Get("instance-key")
@@ -151,6 +152,8 @@ func (ps *ProxyServer) Start() error {
 						if err != nil {
 							return err
 						}
+
+						log.Printf("Rebuild image (base container): %s:%s (%s)\n", rebuildPolicy.Image, rebuildPolicy.Tag, rebuildPolicy.BaseContainer)
 
 						return ps.scheduler.Rebuild(rebuildPolicy)
 					}

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	idleThreshold     = 120 //seconds
+	idleThreshold     = 300 //seconds
 	statusServing     = "serving"
 	statusIdle        = "Idle"
 	statusDestroyed   = "Destroyed"
@@ -104,7 +104,7 @@ func (rp *RuntimePool) Garbages() []*Runtime {
 	var garbages []*Runtime
 	now := time.Now().Unix()
 	for k, v := range rp.pool {
-		if now >= v.ActiveTime+idleThreshold {
+		if v.Status == statusIdle && now >= v.ActiveTime+idleThreshold {
 			//Garbage
 			garbages = append(garbages, v)
 			delete(rp.pool, k) //removed from pool

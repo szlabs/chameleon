@@ -86,7 +86,7 @@ func (s *Scheduler) Schedule(meta RequestMeta) (ServeEnvironment, error) {
 			if err != nil {
 				return ServeEnvironment{}, err
 			}
-			log.Printf("Reuse %s\n", r.Target)
+			log.Printf("Reuse %s: %s\n", r.ID, r.Target)
 			if policy.Rebuild != nil {
 				policy.Rebuild.BaseContainer = r.ID
 			}
@@ -105,6 +105,8 @@ func (s *Scheduler) Schedule(meta RequestMeta) (ServeEnvironment, error) {
 		return ServeEnvironment{}, err
 	}
 
+	log.Printf("Start new service instance: %s\n", env.RuntimeID)
+	
 	key := env.RuntimeID //Just for garbage collection
 	if len(policy.ReuseIdentity) > 0 {
 		key = policy.ReuseIdentity
