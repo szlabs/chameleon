@@ -74,6 +74,17 @@ func (ps *ProxyServer) Start() error {
 			Transport: t,
 			Director: func(req *http.Request) {
 				log.Printf("INCOMING REQ: %s %s\n", req.Method, req.URL.String())
+				//Log sessions
+				session := []string{}
+				for _, c := range req.Cookies() {
+					session = append(session, c.String())
+				}
+				//For npm
+				npmSession := req.Header.Get("Npm-Session")
+				if len(npmSession) > 0 {
+					session = append(session, fmt.Sprintf("%s:%s", "Npm-Session", npmSession))
+				}
+				log.Printf("SESSION: %s\n", strings.Join(session, "; "))
 
 				//Parse request
 				if ps.reqParser != nil {
