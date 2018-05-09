@@ -23,6 +23,6 @@
     },
     "homepage": "https://github.com/steven-zou/registry-factory#readme",
     "dependencies": {
-        "radio2018": "0.1.0"
+        "radio2018": "^0.1.0"
     }
 }

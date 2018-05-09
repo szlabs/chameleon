@@ -91,7 +91,7 @@ func NpmParser(req *http.Request) (RequestMeta, error) {
 			meta.Metadata["extra"] = strings.TrimSpace(strings.TrimPrefix(npmCmd, command))
 			meta.Metadata["session"] = req.Header.Get("Npm-Session")
 			meta.Metadata["basic_auth"] = hex.EncodeToString([]byte(strings.TrimPrefix(req.Header.Get("Authorization"), "Basic ")))
-			meta.Metadata["full_command"] = npmCmd
+			meta.Metadata["full_command"] = fmt.Sprintf("%s %s", "npm", npmCmd)
 
 			//Read more info
 			if command == "publish" || command == "adduser" {
