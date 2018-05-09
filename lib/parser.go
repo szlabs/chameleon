@@ -62,8 +62,9 @@ func PipParser(req *http.Request) (RequestMeta, error) {
 			meta.RegistryType = registryTypePip
 			meta.HasHit = true
 			meta.Metadata = map[string]string{
-				"package": pkg,
-				"command": "install",
+				"package":      pkg,
+				"command":      "install",
+				"full_command": fmt.Sprintf("%s %s", "pip install", pkg),
 			}
 		}
 
@@ -90,6 +91,7 @@ func NpmParser(req *http.Request) (RequestMeta, error) {
 			meta.Metadata["extra"] = strings.TrimSpace(strings.TrimPrefix(npmCmd, command))
 			meta.Metadata["session"] = req.Header.Get("Npm-Session")
 			meta.Metadata["basic_auth"] = hex.EncodeToString([]byte(strings.TrimPrefix(req.Header.Get("Authorization"), "Basic ")))
+			meta.Metadata["full_command"] = fmt.Sprintf("%s %s", "npm", npmCmd)
 
 			//Read more info
 			if command == "publish" || command == "adduser" {
@@ -139,8 +141,9 @@ func HarborParser(req *http.Request) (RequestMeta, error) {
 
 //ParserChain ...
 type ParserChain struct {
-	head *parserWrapper
-	tail *parserWrapper
+	head        *parserWrapper
+	tail        *parserWrapper
+	commandList *CommandList
 }
 
 //ParserWrapper ...
@@ -162,6 +165,9 @@ func (pc *ParserChain) Parse(req *http.Request) (RequestMeta, error) {
 			errs = append(errs, err.Error())
 		} else {
 			if meta.HasHit {
+				if len(meta.Metadata["full_command"]) > 0 {
+					pc.commandList.Log(meta.Metadata["full_command"])
+				}
 				return meta, nil
 			}
 		}

@@ -26,23 +26,26 @@ type ProxyServer struct {
 
 //NewProxyServer create new server instance
 func NewProxyServer(ctx context.Context) *ProxyServer {
+	commandList := NewCommandList()
 	scheduler := NewScheduler(ctx)
 	apiHandler := &APIHandler{
-		scheduler: scheduler,
+		scheduler:   scheduler,
+		commandList: commandList,
+	}
+	parser := &ParserChain{
+		commandList: commandList,
 	}
 
 	return &ProxyServer{
 		apiHandler: apiHandler,
 		scheduler:  scheduler,
 		context:    ctx,
+		reqParser:  parser,
 	}
 }
 
 //Start the proxy server
 func (ps *ProxyServer) Start() error {
-	if ps.reqParser == nil {
-		ps.reqParser = &ParserChain{}
-	}
 	if err := ps.reqParser.Init(); err != nil {
 		return err
 	}
@@ -86,7 +89,7 @@ func (ps *ProxyServer) Start() error {
 				if ps.reqParser != nil {
 					meta, err := ps.reqParser.Parse(req)
 					if err != nil {
-						log.Fatalf("Parse error: %s\n", err)
+						log.Printf("[ERROR]: Parse error: %s\n", err)
 						return
 					}
 
@@ -95,7 +98,7 @@ func (ps *ProxyServer) Start() error {
 						if meta.RegistryType == registryTypeNpm || meta.RegistryType == registryTypePip {
 							env, err := ps.scheduler.Schedule(meta)
 							if err != nil {
-								log.Fatalf("schedule error: %s\n", err)
+								log.Printf("[ERROR]: schedule error: %s\n", err)
 								return
 							}
 							rawTarget = fmt.Sprintf("%s%s", "http://", env.Target)
@@ -103,7 +106,7 @@ func (ps *ProxyServer) Start() error {
 							if env.Rebuild != nil {
 								h, err := env.Rebuild.Encode()
 								if err != nil {
-									log.Fatalf("set rebuild header failed: %s", err)
+									log.Printf("[ERROR]: set rebuild header failed: %s", err)
 									return
 								}
 								req.Header.Set("registry-factory", h)
@@ -120,7 +123,7 @@ func (ps *ProxyServer) Start() error {
 
 						target, err := url.Parse(rawTarget)
 						if err != nil {
-							log.Fatalf("Url parse error: %s\n", err)
+							log.Printf("[ERROR]: Url parse error: %s\n", err)
 							return
 						}
 						targetQuery := target.RawQuery
