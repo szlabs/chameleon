@@ -65,9 +65,10 @@ func (is *ImageStore) Get(key string) (*Image, bool) {
 func (is *ImageStore) Garbage() []*Image {
 	outdatedOnes := make([]*Image, 0)
 	now := time.Now().Unix()
-	for _, v := range is.images {
+	for k, v := range is.images {
 		if now > v.ActiveTime+outdatedTime {
 			outdatedOnes = append(outdatedOnes, v)
+			delete(is.images, k)
 		}
 	}
 
