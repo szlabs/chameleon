@@ -25,7 +25,7 @@ type Environment struct {
 }
 
 //NewExecutor ...
-func NewExecutor(dockerdHost string, hPort int, harbor, namespace string) *Executor {
+func NewExecutor(dockerdHost string, hPort uint, harbor string) *Executor {
 	dHost := ""
 	if hPort > 0 {
 		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)
@@ -36,7 +36,13 @@ func NewExecutor(dockerdHost string, hPort int, harbor, namespace string) *Execu
 			Host: dHost,
 		},
 		harbor:    harbor,
-		namespace: namespace,
+	}
+}
+
+//SetNamespace ...
+func (e *Executor) SetNamespace(ns string){
+	if len(ns) > 0 {
+		e.namespace = ns
 	}
 }
 

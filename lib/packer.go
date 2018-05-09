@@ -16,10 +16,10 @@ type Packer struct {
 }
 
 //NewPacker ...
-func NewPacker(dockerdHost string, hPort int, harborHost string, namespace string) *Packer {
+func NewPacker(dockerdHost string, dockerdPort uint, harborHost string) *Packer {
 	dHost := ""
-	if hPort > 0 {
-		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, hPort)
+	if dockerdPort > 0 {
+		dHost = fmt.Sprintf("tcp://%s:%d", dockerdHost, dockerdPort)
 	}
 
 	return &Packer{
@@ -27,8 +27,14 @@ func NewPacker(dockerdHost string, hPort int, harborHost string, namespace strin
 		docker: &client.DockerClient{
 			Host: dHost,
 		},
-		namespace: namespace,
-		harbor:    harborHost,
+		harbor: harborHost,
+	}
+}
+
+//SetNamespace ...
+func (p *Packer) SetNamespace(ns string) {
+	if len(ns) > 0 {
+		p.namespace = ns
 	}
 }
 
@@ -49,7 +55,7 @@ func (p *Packer) Build(baseContainer string, image, tag string) error {
 	}
 
 	//login
-	if err := p.docker.Login("admin", "Harbor12345", p.harbor); err != nil {
+	if err := p.docker.Login(Config.Dockerd.Admin, Config.Dockerd.Password, p.harbor); err != nil {
 		return err
 	}
 	backendImage := fmt.Sprintf("%s:%s", fullNamespace, newTag)
@@ -76,4 +82,13 @@ func (p *Packer) BuildLocal(baseContainer string, image, tag string) error {
 		newTag = "latest"
 	}
 	return p.docker.Commit(baseContainer, image, newTag)
+}
+
+//RMImage remove the specified image
+func (p *Packer) RMImage(image string) error {
+	if len(image) == 0 {
+		return errors.New("empty image")
+	}
+
+	return p.docker.RMImage(image)
 }

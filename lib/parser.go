@@ -2,6 +2,8 @@ package lib
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +30,11 @@ type npmPackMeta struct {
 	Tags struct {
 		Latest string `json:"latest"`
 	} `json:"dist-tags"`
+}
+
+type npmLoginMeta struct {
+	Username string `json:"name"`
+	Password string `json:"password"`
 }
 
 //Parser ...
@@ -82,24 +89,36 @@ func NpmParser(req *http.Request) (RequestMeta, error) {
 			meta.Metadata["path"] = req.URL.String()
 			meta.Metadata["extra"] = strings.TrimSpace(strings.TrimPrefix(npmCmd, command))
 			meta.Metadata["session"] = req.Header.Get("Npm-Session")
+			meta.Metadata["basic_auth"] = hex.EncodeToString([]byte(strings.TrimPrefix(req.Header.Get("Authorization"), "Basic ")))
 
 			//Read more info
-			if command == "publish" {
-				buf, err := ioutil.ReadAll(req.Body)
-				if err != nil {
-					return RequestMeta{}, err
-				}
-				npmMetaJSON := &npmPackMeta{}
-				if err := json.Unmarshal(buf, npmMetaJSON); err != nil {
-					return RequestMeta{}, err
-				}
+			if command == "publish" || command == "adduser" {
+				if req.Body != nil && req.ContentLength > 0 {
+					buf, err := ioutil.ReadAll(req.Body)
+					if err != nil {
+						return RequestMeta{}, err
+					}
 
-				meta.Metadata["extra"] = npmMetaJSON.Tags.Latest
+					if command == "publish" {
+						npmMetaJSON := &npmPackMeta{}
+						if err := json.Unmarshal(buf, npmMetaJSON); err != nil {
+							return RequestMeta{}, err
+						}
 
-				body := ioutil.NopCloser(bytes.NewBuffer(buf))
-				req.Body = body
-				req.ContentLength = int64(len(buf))
-				req.Header.Set("Content-Length", strconv.Itoa(len(buf)))
+						meta.Metadata["extra"] = npmMetaJSON.Tags.Latest
+					} else if command == "adduser" {
+						npmLoginJSON := &npmLoginMeta{}
+						if err := json.Unmarshal(buf, npmLoginJSON); err != nil {
+							return RequestMeta{}, err
+						}
+						meta.Metadata["basic_auth"] = hex.EncodeToString([]byte(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", npmLoginJSON.Username, npmLoginJSON.Password)))))
+					}
+
+					body := ioutil.NopCloser(bytes.NewBuffer(buf))
+					req.Body = body
+					req.ContentLength = int64(len(buf))
+					req.Header.Set("Content-Length", strconv.Itoa(len(buf)))
+				}
 			}
 
 			return meta, nil

@@ -13,70 +13,121 @@ import (
 	"time"
 )
 
+const (
+	npmUserSessionTimeout = 3600 //seconds
+)
+
 //ProxyTarget ...
 type ProxyTarget string
 
-//SchedulerConfig ...
-type SchedulerConfig struct {
-	DockerHost  string
-	HPort       int
-	Harbor      string
-	Namespace   string //use 'npm-registry' now
-	HarborProto string
-}
-
 //Scheduler ...
 type Scheduler struct {
-	pool        *RuntimePool
-	executor    *Executor
-	packer      *Packer
-	ctx         context.Context
-	drivers     map[string]ScheduleDriver
-	registryAPI string
-	namespace   string
+	pool       *RuntimePool
+	imageStore *ImageStore
+	executor   *Executor
+	packer     *Packer
+	ctx        context.Context
+	drivers    map[string]ScheduleDriver
+	exitChan   chan struct{}
+	doneChan   chan struct{}
 }
 
 //NewScheduler ...
-func NewScheduler(ctx context.Context, cfg SchedulerConfig) *Scheduler {
+func NewScheduler(ctx context.Context) *Scheduler {
 	return &Scheduler{
-		pool:        NewRuntimePool(),
-		executor:    NewExecutor(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
-		packer:      NewPacker(cfg.DockerHost, cfg.HPort, cfg.Harbor, cfg.Namespace),
-		ctx:         ctx,
-		registryAPI: fmt.Sprintf("%s://%s/api", cfg.HarborProto, cfg.Harbor),
-		namespace:   cfg.Namespace,
+		pool:       NewRuntimePool(),
+		imageStore: NewImageStore(),
+		executor:   NewExecutor(Config.Dockerd.Host, Config.Dockerd.Port, Config.Harbor.Host),
+		packer:     NewPacker(Config.Dockerd.Host, Config.Dockerd.Port, Config.Harbor.Host),
+		ctx:        ctx,
+		exitChan:   make(chan struct{}, 1),
+		doneChan:   make(chan struct{}, 1),
 	}
 }
 
 //Start ...
 func (s *Scheduler) Start() {
-	go func() {
-		tk := time.Tick(30 * time.Second)
-		for {
-			select {
-			case <-tk:
-				//Garbage collection
-				garbages := s.pool.Garbages()
-				if len(garbages) > 0 {
-					for _, v := range garbages {
-						//Clear
-						if err := s.executor.Destroy(v.ID); err != nil {
-							log.Fatalf("garbage collection %s error: %s\n", v.ID, err)
-						}
-					}
-				}
-			case <-s.ctx.Done():
-				log.Println("Scheduler stop")
-				return
-			}
-		}
-	}()
+	go s.sweepRuntimes()
+	go s.sweepImages()
 
+	registryAPI := fmt.Sprintf("%s://%s/api", Config.Harbor.Protocol, Config.Harbor.Host)
 	s.drivers = make(map[string]ScheduleDriver)
-	s.drivers[registryTypeNpm] = NewNpmScheduleDriver(s.registryAPI, s.namespace)
-	s.drivers[registryTypePip] = NewPipScheduleDriver(s.registryAPI, "pip-project")
+	s.drivers[registryTypeNpm] = NewNpmScheduleDriver(registryAPI, Config.NpmRegistry.Namespace)
+	s.drivers[registryTypePip] = NewPipScheduleDriver(registryAPI, Config.PipRegistry.Namespace)
 
 	log.Println("Scheduler is started")
+}
+
+func (s *Scheduler) sweepRuntimes() {
+	defer func() {
+		log.Println("Runtime sweeper exit")
+		s.doneChan <- struct{}{}
+	}()
+
+	tk := time.NewTicker(30 * time.Second)
+	defer tk.Stop()
+
+	for {
+		select {
+		case <-tk.C:
+			//Garbage collection
+			garbages := s.pool.Garbages()
+			if len(garbages) > 0 {
+				for _, v := range garbages {
+					//Clear
+					if err := s.executor.Destroy(v.ID); err != nil {
+						log.Fatalf("garbage collection %s error: %s\n", v.ID, err)
+					} else {
+						log.Printf("Destroy container instance: %s\n", v.ID)
+					}
+				}
+			}
+		case <-s.ctx.Done():
+			return
+		case <-s.exitChan:
+			return
+		}
+	}
+}
+
+func (s *Scheduler) sweepImages() {
+	defer func() {
+		log.Println("Image sweeper exit")
+		s.doneChan <- struct{}{}
+	}()
+
+	tk := time.NewTicker(30 * time.Second)
+	defer tk.Stop()
+
+	for {
+		select {
+		case <-tk.C:
+			images := s.imageStore.Garbage()
+			if len(images) > 0 {
+				for _, image := range images {
+					theImage := fmt.Sprintf("%s:%s", image.Name, image.Tag)
+					if err := s.packer.RMImage(theImage); err != nil {
+						log.Printf("Failed to sweep outdated image '%s' with error:%s\n", theImage, err)
+					}
+				}
+			}
+		case <-s.ctx.Done():
+			return
+		case <-s.exitChan:
+			return
+		}
+	}
+}
+
+//Stop scheduler
+func (s *Scheduler) Stop() {
+	defer log.Println("Scheduler is stopped")
+	//Stop 1st loop
+	s.exitChan <- struct{}{}
+	<-s.doneChan
+	//Stop 2nd loop
+	s.exitChan <- struct{}{}
+	<-s.doneChan
 }
 
 //Schedule ...
@@ -95,22 +146,30 @@ func (s *Scheduler) Schedule(meta RequestMeta) (ServeEnvironment, error) {
 			if err != nil {
 				return ServeEnvironment{}, err
 			}
-			log.Printf("Reuse %s\n", r.Target)
+			log.Printf("Reuse %s: %s\n", r.ID, r.Target)
 			if policy.Rebuild != nil {
 				policy.Rebuild.BaseContainer = r.ID
 			}
 			return ServeEnvironment{
-				Target:  r.Target,
-				Rebuild: policy.Rebuild,
+				Target:      r.Target,
+				Rebuild:     policy.Rebuild,
+				InstanceKey: key,
 			}, nil
 		}
 	}
 
 	//Create
+	s.executor.SetNamespace(policy.Namespace)
+	imageKey := fmt.Sprintf("%s:%s", policy.Image, policy.SessionTag)
+	if _, ok := s.imageStore.Get(imageKey); ok {
+		policy.Tag = policy.SessionTag
+	}
 	env, err := s.executor.Exec(policy)
 	if err != nil {
 		return ServeEnvironment{}, err
 	}
+
+	log.Printf("Start new service instance: %s\n", env.RuntimeID)
 
 	key := env.RuntimeID //Just for garbage collection
 	if len(policy.ReuseIdentity) > 0 {
@@ -118,14 +177,24 @@ func (s *Scheduler) Schedule(meta RequestMeta) (ServeEnvironment, error) {
 	}
 	key = fmt.Sprintf("%s:%s", meta.RegistryType, key)
 
-	s.pool.Put(key, env.RuntimeID, env.Target)
+	r := &Runtime{
+		ID:         env.RuntimeID,
+		Target:     env.Target,
+		ActiveTime: time.Now().Unix(),
+		Image:      fmt.Sprintf("%s:%s", policy.Image, policy.Tag),
+	}
+	if err := s.pool.Put(key, r); err != nil {
+		//let's see if problem will appear
+		log.Printf("Pool error: %s\n", err)
+	}
 
 	if policy.Rebuild != nil {
 		policy.Rebuild.BaseContainer = env.RuntimeID
 	}
 	return ServeEnvironment{
-		Target:  env.Target,
-		Rebuild: policy.Rebuild,
+		Target:      env.Target,
+		Rebuild:     policy.Rebuild,
+		InstanceKey: key,
 	}, nil
 }
 
@@ -144,27 +213,51 @@ func (s *Scheduler) Rebuild(policy *BuildPolicy) error {
 	}
 
 	if policy.NeedPush {
+		s.packer.SetNamespace(policy.Namespace)
 		return s.packer.Build(policy.BaseContainer, policy.Image, policy.Tag)
 	}
 
 	return s.packer.BuildLocal(policy.BaseContainer, policy.Image, policy.Tag)
 }
 
+//FreeRuntime mark the instance as idle
+func (s *Scheduler) FreeRuntime(key string) error {
+	go func() {
+		<-time.After(2 * time.Second)
+		s.pool.SetIdle(key)
+	}()
+
+	return nil
+}
+
+//GetRuntimes get all runtimes including the destroyed ones
+func (s *Scheduler) GetRuntimes() []*Runtime {
+	return s.pool.GetAll()
+}
+
+//StoreImage ...
+func (s *Scheduler) StoreImage(image, tag string) {
+	s.imageStore.Put(image, tag)
+}
+
 //ServeEnvironment ...
 type ServeEnvironment struct {
-	Target  ProxyTarget
-	Rebuild *BuildPolicy
+	Target      ProxyTarget
+	Rebuild     *BuildPolicy
+	InstanceKey string
 }
 
 //SchedulePolicy ...
 type SchedulePolicy struct {
 	Image         string
 	Tag           string
+	SessionTag    string
 	UseHub        bool
 	ReuseIdentity string
 	BoundPorts    []int
 	Rebuild       *BuildPolicy
 	EnvVars       map[string]string
+	Namespace     string
 }
 
 //BuildPolicy ...
@@ -173,6 +266,8 @@ type BuildPolicy struct {
 	Image         string `json:"image"`
 	Tag           string `json:"tag"`
 	NeedPush      bool   `json:"need_push"`
+	Namespace     string `json:"namespace"`
+	NeedStore     bool   `json:"need_store"`
 }
 
 //Encode ...
@@ -207,7 +302,7 @@ type PipScheduleDriver struct {
 	httpClient        *http.Client
 }
 
-//NewNpmScheduleDriver ...
+//NewPipScheduleDriver ...
 func NewPipScheduleDriver(registryAPI, registryNamespace string) *PipScheduleDriver {
 	return &PipScheduleDriver{
 		registryAPI:       registryAPI,
@@ -237,12 +332,13 @@ func (psd *PipScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 			BoundPorts:    []int{80},
 			ReuseIdentity: meta.Metadata["package"],
 			EnvVars:       map[string]string{"PYPI_EXTRA": "--disable-fallback", "PYPI_ROOT": "/pypi"},
+			Namespace:     psd.registryNamespace,
 		}
 		return policy
 
-	} else {
-		log.Printf("Unknown command for pip package: %s\n", meta.Metadata["command"])
 	}
+
+	log.Printf("Unknown command for pip package: %s\n", meta.Metadata["command"])
 
 	return nil
 }
@@ -277,14 +373,16 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 
 	//Default policy
 	policy := &SchedulePolicy{
-		Image:      "stevenzou/npm-registry",
-		Tag:        "latest",
+		Image:      Config.NpmRegistry.BaseImage,
+		Tag:        Config.NpmRegistry.BaseImageTag,
 		UseHub:     true,
 		BoundPorts: []int{80},
 		Rebuild: &BuildPolicy{
-			Image: "stevenzou/npm-registry",
-			Tag:   "latest",
+			Image:     Config.NpmRegistry.BaseImage,
+			Tag:       Config.NpmRegistry.BaseImageTag,
+			Namespace: nsd.registryNamespace,
 		},
+		Namespace: nsd.registryNamespace,
 	}
 
 	//If has reuseIdentity
@@ -310,19 +408,26 @@ func (nsd *NpmScheduleDriver) Schedule(meta RequestMeta) *SchedulePolicy {
 
 	if command == "login" || command == "adduser" || command == "add-user" {
 		if strings.Contains(requestPath, "org.couchdb.user:") &&
-			!strings.Contains(requestPath, "/-rev/") {
-			policy.Rebuild = nil
+			!strings.Contains(requestPath, "/-rev/") { //for login
+			policy.Rebuild.Tag = meta.Metadata["basic_auth"]
+			//Store it for next actions with same auth info
+			policy.Rebuild.NeedStore = true
 		}
 	}
 
 	if command == "publish" {
 		repo := strings.TrimPrefix(requestPath, "/")
 		tag := meta.Metadata["extra"]
-		log.Printf("===Publishing===: %s@%s", repo, tag)
+		log.Printf("PUBLISH: %s@%s", repo, tag)
 		if checkImageExisting(nsd.registryAPI, nsd.registryNamespace, repo, tag, nsd.httpClient) {
 			policy.Image = repo
 			policy.Tag = tag
 			policy.UseHub = false
+		} else {
+			sessionTag := meta.Metadata["basic_auth"]
+			if len(sessionTag) > 0 {
+				policy.SessionTag = sessionTag
+			}
 		}
 		policy.Rebuild.Image = strings.TrimPrefix(requestPath, "/")
 		policy.Rebuild.Tag = meta.Metadata["extra"]

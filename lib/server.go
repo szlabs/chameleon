@@ -14,49 +14,32 @@ import (
 	"time"
 )
 
-//ServerConfig used to config the proxy server
-type ServerConfig struct {
-	Host        string
-	Port        int
-	DockerdHost string
-	DockerPort  int
-	HarborHost  string
-	HarborProto string
-}
-
 //ProxyServer serves the requests
 type ProxyServer struct {
-	server      *http.Server
-	proxy       *httputil.ReverseProxy
-	host        string
-	port        int
-	dockerdHost string
-	dockerPort  int
-	harbor      string
-	harborProto string
-	running     bool
-	reqParser   *ParserChain
-	scheduler   *Scheduler
+	server     *http.Server
+	proxy      *httputil.ReverseProxy
+	context    context.Context
+	reqParser  *ParserChain
+	scheduler  *Scheduler
+	apiHandler *APIHandler
 }
 
 //NewProxyServer create new server instance
-func NewProxyServer(config ServerConfig) *ProxyServer {
+func NewProxyServer(ctx context.Context) *ProxyServer {
+	scheduler := NewScheduler(ctx)
+	apiHandler := &APIHandler{
+		scheduler: scheduler,
+	}
+
 	return &ProxyServer{
-		host:        config.Host,
-		port:        config.Port,
-		dockerdHost: config.DockerdHost,
-		dockerPort:  config.DockerPort,
-		harbor:      config.HarborHost,
-		harborProto: config.HarborProto,
+		apiHandler: apiHandler,
+		scheduler:  scheduler,
+		context:    ctx,
 	}
 }
 
 //Start the proxy server
-func (ps *ProxyServer) Start(ctx context.Context) error {
-	if ps.running {
-		return nil
-	}
-
+func (ps *ProxyServer) Start() error {
 	if ps.reqParser == nil {
 		ps.reqParser = &ParserChain{}
 	}
@@ -64,17 +47,7 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 		return err
 	}
 
-	if ps.scheduler == nil {
-		sConfig := SchedulerConfig{
-			DockerHost:  ps.dockerdHost,
-			HPort:       ps.dockerPort,
-			Harbor:      ps.harbor,
-			Namespace:   "registry-factory", //use hardcode now
-			HarborProto: ps.harborProto,
-		}
-		ps.scheduler = NewScheduler(ctx, sConfig)
-		ps.scheduler.Start()
-	}
+	ps.scheduler.Start()
 
 	if ps.proxy == nil {
 		t := &http.Transport{
@@ -95,8 +68,19 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 		ps.proxy = &httputil.ReverseProxy{
 			Transport: t,
 			Director: func(req *http.Request) {
-				log.Printf("HEADER:%#v\n", req.Header)
-				log.Printf("PROXY: %s %s\n", req.Method, req.URL.String())
+				log.Printf("INCOMING REQ: %s %s\n", req.Method, req.URL.String())
+				//Log sessions
+				session := []string{}
+				for _, c := range req.Cookies() {
+					session = append(session, c.String())
+				}
+				//For npm
+				npmSession := req.Header.Get("Npm-Session")
+				if len(npmSession) > 0 {
+					session = append(session, fmt.Sprintf("%s:%s", "Npm-Session", npmSession))
+				}
+				log.Printf("SESSION: %s\n", strings.Join(session, "; "))
+				log.Printf("HEADER: %#-v\n", req.Header)
 
 				//Parse request
 				if ps.reqParser != nil {
@@ -124,11 +108,14 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 								}
 								req.Header.Set("registry-factory", h)
 							}
-							//	} else if meta.RegistryType == registryTypePip {
-							//			log.Printf("TODO!!\n")
+
+							//Set instance key for status updating
+							if len(env.InstanceKey) > 0 {
+								req.Header.Set("instance-key", env.InstanceKey)
+							}
 						} else {
-							//Treat as harbor
-							rawTarget = fmt.Sprintf("%s://%s", ps.harborProto, ps.harbor)
+							//Treat as management/harbor
+							rawTarget = fmt.Sprintf("%s://%s", Config.Harbor.Protocol, Config.Harbor.Host)
 						}
 
 						target, err := url.Parse(rawTarget)
@@ -150,23 +137,45 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 							req.Header.Set("User-Agent", "")
 						}
 
-						log.Printf("===PROXY TO===:%s\n", req.URL.String())
+						log.Printf("PROXY TO: %s\n", req.URL.String())
 					}
 				}
 				//do nothing
 			},
 
 			ModifyResponse: func(res *http.Response) error {
+				log.Printf("RESPONSE: %s\n", res.Status)
+				//Request served
+				//Do not care the response status code
+				instanceKey := res.Request.Header.Get("instance-key")
+				if len(instanceKey) > 0 {
+					ps.scheduler.FreeRuntime(instanceKey)
+				}
 				if res.StatusCode >= http.StatusOK && res.StatusCode <= http.StatusAccepted {
 					rebuildPolicyHeader := res.Request.Header.Get("registry-factory")
 					if len(rebuildPolicyHeader) > 0 {
-						rebuildPolicy := &BuildPolicy{}
-						err := rebuildPolicy.Decode(rebuildPolicyHeader)
-						if err != nil {
-							return err
-						}
+						//Use async way to improve pref, this may cause inconsistent case
+						//client get success code
+						//but the package image may not be pushed to harbor
+						go func() {
+							rebuildPolicy := &BuildPolicy{}
+							err := rebuildPolicy.Decode(rebuildPolicyHeader)
+							if err != nil {
+								log.Printf("[ERROR]: Failed to decode rebuild policy with error:%s\n", err)
+							}
 
-						return ps.scheduler.Rebuild(rebuildPolicy)
+							log.Printf("Rebuild image (base container): %s:%s (%s)\n", rebuildPolicy.Image, rebuildPolicy.Tag, rebuildPolicy.BaseContainer)
+
+							if err := ps.scheduler.Rebuild(rebuildPolicy); err != nil {
+								log.Printf("[ERROR]: Failed to rebuild image: %s:%s\n", rebuildPolicy.Image, rebuildPolicy.Tag)
+							}
+
+							//Store image for future use
+							if rebuildPolicy.NeedStore {
+								ps.scheduler.StoreImage(rebuildPolicy.Image, rebuildPolicy.Tag)
+								log.Printf("Store image: %s:%s\n", rebuildPolicy.Image, rebuildPolicy.Tag)
+							}
+						}()
 					}
 				}
 
@@ -177,8 +186,12 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 
 	if ps.server == nil {
 		ps.server = &http.Server{
-			Addr: fmt.Sprintf("%s:%d", ps.host, ps.port),
+			Addr: fmt.Sprintf("%s:%d", Config.Host, Config.Port),
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if ps.apiHandler.IsMatchedRequests(r) {
+					ps.apiHandler.ServeHTTP(w, r)
+					return
+				}
 				ps.proxy.ServeHTTP(w, r)
 			}),
 		}
@@ -188,21 +201,18 @@ func (ps *ProxyServer) Start(ctx context.Context) error {
 }
 
 //Stop the proxy server
-func (ps *ProxyServer) Stop(ctx context.Context) error {
-	if !ps.running {
-		return nil
-	}
-
+func (ps *ProxyServer) Stop() error {
 	if ps.server == nil {
 		return errors.New("No server existing")
 	}
 
-	err := ps.server.Shutdown(ctx)
-	if err == nil {
-		ps.running = false
-	}
+	//Stop scheduler
+	ps.scheduler.Stop()
 
-	return err
+	ctx, cancel := context.WithTimeout(ps.context, 30*time.Second)
+	defer cancel()
+
+	return ps.server.Shutdown(ctx)
 }
 
 func singleJoiningSlash(a, b string) string {
