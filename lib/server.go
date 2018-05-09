@@ -26,23 +26,26 @@ type ProxyServer struct {
 
 //NewProxyServer create new server instance
 func NewProxyServer(ctx context.Context) *ProxyServer {
+	commandList := NewCommandList()
 	scheduler := NewScheduler(ctx)
 	apiHandler := &APIHandler{
-		scheduler: scheduler,
+		scheduler:   scheduler,
+		commandList: commandList,
+	}
+	parser := &ParserChain{
+		commandList: commandList,
 	}
 
 	return &ProxyServer{
 		apiHandler: apiHandler,
 		scheduler:  scheduler,
 		context:    ctx,
+		reqParser:  parser,
 	}
 }
 
 //Start the proxy server
 func (ps *ProxyServer) Start() error {
-	if ps.reqParser == nil {
-		ps.reqParser = &ParserChain{}
-	}
 	if err := ps.reqParser.Init(); err != nil {
 		return err
 	}
