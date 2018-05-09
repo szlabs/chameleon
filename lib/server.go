@@ -18,7 +18,6 @@ import (
 type ProxyServer struct {
 	server     *http.Server
 	proxy      *httputil.ReverseProxy
-	running    bool
 	context    context.Context
 	reqParser  *ParserChain
 	scheduler  *Scheduler
@@ -41,10 +40,6 @@ func NewProxyServer(ctx context.Context) *ProxyServer {
 
 //Start the proxy server
 func (ps *ProxyServer) Start() error {
-	if ps.running {
-		return nil
-	}
-
 	if ps.reqParser == nil {
 		ps.reqParser = &ParserChain{}
 	}
@@ -85,6 +80,7 @@ func (ps *ProxyServer) Start() error {
 					session = append(session, fmt.Sprintf("%s:%s", "Npm-Session", npmSession))
 				}
 				log.Printf("SESSION: %s\n", strings.Join(session, "; "))
+				log.Printf("HEADER: %#-v\n", req.Header)
 
 				//Parse request
 				if ps.reqParser != nil {
@@ -166,7 +162,15 @@ func (ps *ProxyServer) Start() error {
 
 						log.Printf("Rebuild image (base container): %s:%s (%s)\n", rebuildPolicy.Image, rebuildPolicy.Tag, rebuildPolicy.BaseContainer)
 
-						return ps.scheduler.Rebuild(rebuildPolicy)
+						if err := ps.scheduler.Rebuild(rebuildPolicy); err != nil {
+							return err
+						}
+
+						//Store image for future use
+						if rebuildPolicy.NeedStore {
+							ps.scheduler.StoreImage(rebuildPolicy.Image, rebuildPolicy.Tag)
+							log.Printf("Store image: %s:%s\n", rebuildPolicy.Image, rebuildPolicy.Tag)
+						}
 					}
 				}
 
@@ -193,23 +197,17 @@ func (ps *ProxyServer) Start() error {
 
 //Stop the proxy server
 func (ps *ProxyServer) Stop() error {
-	if !ps.running {
-		return nil
-	}
-
 	if ps.server == nil {
 		return errors.New("No server existing")
 	}
 
+	//Stop scheduler
+	ps.scheduler.Stop()
+
 	ctx, cancel := context.WithTimeout(ps.context, 30*time.Second)
 	defer cancel()
 
-	err := ps.server.Shutdown(ctx)
-	if err == nil {
-		ps.running = false
-	}
-
-	return err
+	return ps.server.Shutdown(ctx)
 }
 
 func singleJoiningSlash(a, b string) string {

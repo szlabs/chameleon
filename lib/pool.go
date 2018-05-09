@@ -108,6 +108,8 @@ func (rp *RuntimePool) Garbages() []*Runtime {
 			//Garbage
 			garbages = append(garbages, v)
 			delete(rp.pool, k) //removed from pool
+
+			v.Status = statusDestroyed
 			//Keep in the destroyed list for a while
 			if len(rp.destroyedOnes) < maxLenOfDestroyed {
 				rp.destroyedOnes = append(rp.destroyedOnes, v)

@@ -32,8 +32,8 @@ func NewPacker(dockerdHost string, dockerdPort uint, harborHost string) *Packer 
 }
 
 //SetNamespace ...
-func (p *Packer) SetNamespace(ns string){
-	if len(ns)>0{
+func (p *Packer) SetNamespace(ns string) {
+	if len(ns) > 0 {
 		p.namespace = ns
 	}
 }
@@ -82,4 +82,13 @@ func (p *Packer) BuildLocal(baseContainer string, image, tag string) error {
 		newTag = "latest"
 	}
 	return p.docker.Commit(baseContainer, image, newTag)
+}
+
+//RMImage remove the specified image
+func (p *Packer) RMImage(image string) error {
+	if len(image) == 0 {
+		return errors.New("empty image")
+	}
+
+	return p.docker.RMImage(image)
 }
