@@ -152,7 +152,11 @@ func (ps *ProxyServer) Start() error {
 				//Do not care the response status code
 				instanceKey := res.Request.Header.Get("instance-key")
 				if len(instanceKey) > 0 {
-					ps.scheduler.FreeRuntime(instanceKey)
+					//delay several seconds
+					go func() {
+						time.Sleep(5 * time.Second)
+						ps.scheduler.FreeRuntime(instanceKey)
+					}()
 				}
 				if res.StatusCode >= http.StatusOK && res.StatusCode <= http.StatusAccepted {
 					rebuildPolicyHeader := res.Request.Header.Get("registry-factory")
