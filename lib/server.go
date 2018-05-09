@@ -154,23 +154,28 @@ func (ps *ProxyServer) Start() error {
 				if res.StatusCode >= http.StatusOK && res.StatusCode <= http.StatusAccepted {
 					rebuildPolicyHeader := res.Request.Header.Get("registry-factory")
 					if len(rebuildPolicyHeader) > 0 {
-						rebuildPolicy := &BuildPolicy{}
-						err := rebuildPolicy.Decode(rebuildPolicyHeader)
-						if err != nil {
-							return err
-						}
+						//Use async way to improve pref, this may cause inconsistent case
+						//client get success code
+						//but the package image may not be pushed to harbor
+						go func() {
+							rebuildPolicy := &BuildPolicy{}
+							err := rebuildPolicy.Decode(rebuildPolicyHeader)
+							if err != nil {
+								log.Printf("[ERROR]: Failed to decode rebuild policy with error:%s\n", err)
+							}
 
-						log.Printf("Rebuild image (base container): %s:%s (%s)\n", rebuildPolicy.Image, rebuildPolicy.Tag, rebuildPolicy.BaseContainer)
+							log.Printf("Rebuild image (base container): %s:%s (%s)\n", rebuildPolicy.Image, rebuildPolicy.Tag, rebuildPolicy.BaseContainer)
 
-						if err := ps.scheduler.Rebuild(rebuildPolicy); err != nil {
-							return err
-						}
+							if err := ps.scheduler.Rebuild(rebuildPolicy); err != nil {
+								log.Printf("[ERROR]: Failed to rebuild image: %s:%s\n", rebuildPolicy.Image, rebuildPolicy.Tag)
+							}
 
-						//Store image for future use
-						if rebuildPolicy.NeedStore {
-							ps.scheduler.StoreImage(rebuildPolicy.Image, rebuildPolicy.Tag)
-							log.Printf("Store image: %s:%s\n", rebuildPolicy.Image, rebuildPolicy.Tag)
-						}
+							//Store image for future use
+							if rebuildPolicy.NeedStore {
+								ps.scheduler.StoreImage(rebuildPolicy.Image, rebuildPolicy.Tag)
+								log.Printf("Store image: %s:%s\n", rebuildPolicy.Image, rebuildPolicy.Tag)
+							}
+						}()
 					}
 				}
 
