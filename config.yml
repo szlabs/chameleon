@@ -14,6 +14,6 @@ npm_registry: #npm
   base_image: "stevenzou/npm-registry"
   base_image_tag: "latest"  
 pip_registry: #pip
-  namespace: "pip-registry"
+  namespace: "registry-factory"
   base_image: ""
   base_image_tag: ""
