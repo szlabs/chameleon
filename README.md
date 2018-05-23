@@ -52,6 +52,7 @@ pip_registry: #pip
 ```
 
 Update the configuration file before running:
+
 |           options            |                      comments                              |                
 |------------------------------|------------------------------------------------------------|
 |  host                        | The server listening host                                  |
