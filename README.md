@@ -74,7 +74,7 @@ Update the configuration file before running:
 Use the following command to start the server:
 
 ```
-go run mian.go -c <config file>
+go run main.go -c <config file>
 
 #or 
 #go build -o factory
