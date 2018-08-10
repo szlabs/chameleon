@@ -1,5 +1,6 @@
 # chameleon
 <img alt="chameleon" src="images/logo.png" width="128" height="128">
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/5998b6ecb5de401888cb8d22ca8422f4)](https://www.codacy.com/project/loneghost1982/registry-factory/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=steven-zou/registry-factory&amp;utm_campaign=Badge_Grade_Dashboard)
 
 Project **chameleon** is incubated from and built on the popular open source project **[Harbor](https://github.com/vmware/harbor)**, which is an enterprise-class registry server that stores and distributes container images.
 
